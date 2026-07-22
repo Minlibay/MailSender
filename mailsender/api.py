@@ -178,6 +178,11 @@ class Api:
         from . import finder
         return finder.find_site_emails(url)
 
+    def find_sites(self, urls) -> dict:
+        """Поиск по нескольким сайтам сразу (до 10)."""
+        from . import finder
+        return finder.find_many_sites(urls)
+
     def add_found_emails(self, emails: list, company: str = "") -> dict:
         """Добавить выбранные найденные адреса в контакты (с ручного выбора)."""
         added = skipped = invalid = 0

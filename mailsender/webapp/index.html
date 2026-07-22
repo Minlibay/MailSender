@@ -99,26 +99,20 @@
         <!-- ПОИСК ПОЧТЫ НА САЙТЕ -->
         <section class="page" id="page-finder">
           <div class="panel">
-            <h2>Поиск контактного адреса компании</h2>
-            <div class="sub">Вставьте адрес сайта компании — найдём публичные адреса (info@, hello@, pr@) на главной и страницах контактов. Один сайт за раз; результат добавляете в контакты вручную.</div>
-            <div class="row" style="margin-top:6px">
-              <input class="field" id="find-url" placeholder="company.ru или https://company.ru/contacts" style="flex:1">
+            <h2>Поиск контактных адресов компаний</h2>
+            <div class="sub">Вставьте адреса сайтов — по одному в строке, до 10. По каждому найдём публичные адреса (info@, hello@, pr@) на главной и страницах контактов. Результат добавляете в контакты вручную.</div>
+            <textarea id="find-urls" style="margin-top:8px;min-height:110px" placeholder="company.ru&#10;https://acme.io/contacts&#10;beta-corp.ru"></textarea>
+            <div class="row" style="justify-content:space-between;margin-top:8px">
+              <div id="find-status" class="hint"></div>
               <button class="btn btn-primary" id="btn-find">Найти</button>
             </div>
-            <div id="find-status" class="hint" style="margin-top:10px"></div>
           </div>
           <div class="panel" id="find-results" style="display:none">
             <div class="row" style="justify-content:space-between;margin-bottom:10px">
               <h2>Найденные адреса</h2>
               <button class="btn btn-primary" id="btn-add-found">Добавить выбранные</button>
             </div>
-            <div id="find-primary"></div>
-            <div id="find-other-wrap" style="display:none">
-              <div class="sep"></div>
-              <div class="sub">Прочие адреса со страницы (другой домен — проверьте, что это та же компания):</div>
-              <div id="find-other"></div>
-            </div>
-            <div class="hint mono" id="find-pages" style="margin-top:12px"></div>
+            <div id="find-sites"></div>
           </div>
         </section>
 

@@ -149,3 +149,66 @@ def find_site_emails(url: str, *, max_pages: int = _MAX_PAGES) -> dict:
         "primary": primary,
         "other": other,
     }
+
+
+# Максимум сайтов за один запуск. Сознательное ограничение: инструмент —
+# для ручного разбора нескольких компаний, а не для массового обхода.
+MAX_SITES = 10
+
+
+def find_many_sites(urls) -> dict:
+    """Найти контактные адреса на нескольких сайтах (до MAX_SITES).
+
+    urls — список строк или многострочный текст (по одному адресу в строке).
+    Каждый сайт обрабатывается независимо как одна компания. Возвращает
+    список результатов по сайтам, ошибочные помечаются, но не прерывают
+    остальные.
+    """
+    if isinstance(urls, str):
+        items = urls.replace(",", "\n").splitlines()
+    else:
+        items = list(urls or [])
+
+    # чистим, убираем пустые и дубли, сохраняя порядок
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for u in items:
+        u = (u or "").strip()
+        if not u or u.lower() in seen:
+            continue
+        seen.add(u.lower())
+        cleaned.append(u)
+
+    if not cleaned:
+        return {"ok": False, "message": "Укажите хотя бы один адрес сайта"}
+
+    truncated = len(cleaned) > MAX_SITES
+    cleaned = cleaned[:MAX_SITES]
+
+    sites = []
+    total = 0
+    for u in cleaned:
+        res = find_site_emails(u)
+        if res.get("ok"):
+            found = len(res["primary"]) + len(res["other"])
+            total += found
+            sites.append({
+                "input": u,
+                "ok": True,
+                "domain": res["domain"],
+                "primary": res["primary"],
+                "other": res["other"],
+                "count": found,
+            })
+        else:
+            sites.append({"input": u, "ok": False,
+                          "message": res.get("message", "Не удалось открыть сайт")})
+
+    return {
+        "ok": True,
+        "sites": sites,
+        "total_found": total,
+        "sites_count": len(cleaned),
+        "truncated": truncated,
+        "max_sites": MAX_SITES,
+    }

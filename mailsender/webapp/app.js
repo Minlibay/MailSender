@@ -510,54 +510,71 @@ $("#btn-sync").onclick = async () => {
   toast(r.added.length ? `В стоп-лист добавлено: ${r.added.length}` : "Новых отписок нет", "ok");
 };
 
-/* ---------------- ПОИСК ПОЧТЫ НА САЙТЕ ---------------- */
+/* ---------------- ПОИСК ПОЧТЫ НА САЙТАХ ---------------- */
 
-let lastFindDomain = "";
-
-function emailRow(email) {
-  return `<label class="check" style="display:flex;padding:7px 4px;gap:9px">
-    <input type="checkbox" class="find-cb" value="${esc(email)}" checked>
+// Чекбокс несёт и адрес, и компанию (домен сайта) — чтобы при добавлении
+// каждый контакт получил свою компанию.
+function emailRow(email, company) {
+  return `<label class="check" style="display:flex;padding:6px 4px;gap:9px">
+    <input type="checkbox" class="find-cb" value="${esc(email)}" data-company="${esc(company)}" checked>
     <span class="mono">${esc(email)}</span></label>`;
 }
 
+function siteBlock(site) {
+  if (!site.ok) {
+    return `<div class="find-site">
+      <div class="find-site-head">🌐 ${esc(site.input)}</div>
+      <div class="hint" style="color:var(--danger)">${esc(site.message)}</div></div>`;
+  }
+  const primary = site.primary.length
+    ? site.primary.map(e => emailRow(e, site.domain)).join("")
+    : `<div class="empty-hint" style="padding:8px">На домене ${esc(site.domain)} адресов не найдено.</div>`;
+  const other = site.other.length ? `
+    <div class="hint" style="margin:6px 0 2px">Прочие адреса (другой домен — проверьте, что та же компания):</div>
+    ${site.other.map(e => emailRow(e, site.domain)).join("")}` : "";
+  return `<div class="find-site">
+    <div class="find-site-head">🌐 ${esc(site.domain)} <span class="chip">${site.count}</span></div>
+    ${primary}${other}</div>`;
+}
+
 $("#btn-find").onclick = async () => {
-  const url = $("#find-url").value.trim();
-  if (!url) { toast("Укажите адрес сайта", "err"); return; }
+  const urls = $("#find-urls").value.trim();
+  if (!urls) { toast("Вставьте хотя бы один сайт", "err"); return; }
   const btn = $("#btn-find"); btn.disabled = true; btn.textContent = "Ищу…";
-  $("#find-status").textContent = "Открываю сайт и страницы контактов…";
+  $("#find-status").textContent = "Открываю сайты и страницы контактов…";
   $("#find-results").style.display = "none";
   let r;
-  try { r = await api().find_site_emails(url); }
+  try { r = await api().find_sites(urls); }
   catch (e) { r = { ok: false, message: String(e) }; }
   btn.disabled = false; btn.textContent = "Найти";
   if (!r.ok) { $("#find-status").textContent = ""; toast(r.message || "Не найдено", "err"); return; }
 
-  lastFindDomain = r.domain || "";
-  const total = r.primary.length + r.other.length;
-  $("#find-status").textContent = total
-    ? `Найдено адресов: ${total} (проверено страниц: ${r.pages_checked.length})`
-    : "Публичных адресов на сайте не найдено.";
-  $("#find-primary").innerHTML = r.primary.length
-    ? r.primary.map(emailRow).join("")
-    : `<div class="empty-hint">На домене ${esc(r.domain)} адресов не найдено.</div>`;
-  if (r.other.length) {
-    $("#find-other").innerHTML = r.other.map(emailRow).join("");
-    $("#find-other-wrap").style.display = "";
-  } else {
-    $("#find-other-wrap").style.display = "none";
-  }
-  $("#find-pages").textContent = "Проверено: " + r.pages_checked.join("  ");
-  $("#find-results").style.display = total ? "" : "none";
+  const okSites = r.sites.filter(s => s.ok).length;
+  $("#find-status").textContent =
+    `Проверено сайтов: ${r.sites_count}, найдено адресов: ${r.total_found}`
+    + (r.truncated ? ` · показаны первые ${r.max_sites}` : "");
+  $("#find-sites").innerHTML = r.sites.map(siteBlock).join("");
+  $("#find-results").style.display = "";
+  if (r.truncated) toast(`Обработано первые ${r.max_sites} сайтов из списка`, "ok");
 };
 
 $("#btn-add-found").onclick = async () => {
-  const emails = $$(".find-cb").filter(c => c.checked).map(c => c.value);
-  if (!emails.length) { toast("Отметьте адреса галочкой", "err"); return; }
-  const r = await api().add_found_emails(emails, lastFindDomain);
-  if (!r.ok) { toast(r.message || "Ошибка", "err"); return; }
-  toast(`Добавлено: ${r.added}` + (r.skipped ? `, пропущено: ${r.skipped}` : ""), "ok");
+  const checked = $$(".find-cb").filter(c => c.checked);
+  if (!checked.length) { toast("Отметьте адреса галочкой", "err"); return; }
+  // группируем по компании (домену) — у каждого контакта своя компания
+  const byCompany = {};
+  checked.forEach(c => {
+    const co = c.dataset.company || "";
+    (byCompany[co] ||= []).push(c.value);
+  });
+  let added = 0, skipped = 0;
+  for (const [company, emails] of Object.entries(byCompany)) {
+    const r = await api().add_found_emails(emails, company);
+    if (r.ok) { added += r.added; skipped += r.skipped; }
+  }
+  toast(`Добавлено: ${added}` + (skipped ? `, пропущено: ${skipped}` : ""), "ok");
   $("#find-results").style.display = "none";
-  $("#find-url").value = "";
+  $("#find-urls").value = "";
   $("#find-status").textContent = "";
 };
 
@@ -778,6 +795,11 @@ function installMockApi() {
       pages_checked: ["https://northline.com", "https://northline.com/contacts"],
       primary: ["info@northline.com", "pr@northline.com", "sales@northline.com"],
       other: ["hello@partners.io"] }),
+    find_sites: () => P({ ok: true, sites_count: 3, total_found: 5, truncated: false, max_sites: 10, sites: [
+      { input: "northline.com", ok: true, domain: "northline.com", count: 3,
+        primary: ["info@northline.com", "pr@northline.com", "sales@northline.com"], other: ["hello@partners.io"] },
+      { input: "acme.io", ok: true, domain: "acme.io", count: 1, primary: ["hello@acme.io"], other: [] },
+      { input: "broken-site.ru", ok: false, message: "Не удалось открыть сайт (проверьте адрес или доступность)." } ] }),
     add_found_emails: (e) => P({ ok: true, added: e.length, skipped: 0, invalid: 0 }),
     list_templates: () => P([{ id: 1, name: "Первое касание", subject: "{{company}} — сотрудничество", body_text: "Здравствуйте, {{first_name|коллеги}}!", body_html: "" }]),
     save_template: () => P({ ok: true, id: 2 }), delete_template: () => P({ ok: true }),
