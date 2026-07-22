@@ -70,6 +70,10 @@ function showPage(page) {
   $("#page-" + page).classList.add("active");
   $("#page-title").textContent = PAGE_TITLES[page] || "";
   $("#board-seg").style.display = page === "board" ? "" : "none";
+  // Плавающая кнопка «Новая рассылка» — только на рабочих страницах,
+  // не на настройках и не на самом композере.
+  const fab = $("#fab");
+  if (fab) fab.style.display = (page === "settings" || page === "compose") ? "none" : "";
 
   if (page === "board") loadBoard();
   if (page === "contacts") loadContacts();
