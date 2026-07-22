@@ -4,11 +4,12 @@ services:
     container_name: mailsender
     restart: unless-stopped
     ports:
-      # Только localhost: наружу доступ через nginx+HTTPS (см. DEPLOY.md).
-      # Docker публикует порты в обход ufw, поэтому привязка к 127.0.0.1 —
-      # надёжный способ не выставить панель в интернет напрямую.
-      # Для временного доступа по http://IP:8000 замените на "0.0.0.0:8000:8000".
-      - "127.0.0.1:8000:8000"
+      # Доступ по IP: панель слушает на всех интерфейсах (http://IP:8000).
+      # ВАЖНО: HTTP без шифрования — пароль и письма идут по сети открыто.
+      # Вход всё равно защищён общим паролем (MAILSENDER_ACCESS_PASSWORD).
+      # Чтобы закрыть панель за HTTPS — см. DEPLOY.md (nginx + certbot) и
+      # верните привязку к "127.0.0.1:8000:8000".
+      - "0.0.0.0:8000:8000"
     environment:
       # ОБЯЗАТЕЛЬНО задайте пароль в .env — это общий ключ от панели.
       MAILSENDER_ACCESS_PASSWORD: "${MAILSENDER_ACCESS_PASSWORD:?Задайте MAILSENDER_ACCESS_PASSWORD в .env}"
