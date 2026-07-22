@@ -1,0 +1,10 @@
+# Зависимости веб-сервера (то, что ставится в Docker-образ).
+# Здесь НЕТ PySide6/pywebview/keyring — они нужны только десктопной версии.
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9   # загрузка файлов (импорт списков)
+
+openpyxl>=3.1             # чтение .xlsx
+email-validator>=2.1      # валидация адресов
+dnspython>=2.4            # проверка SPF/DKIM/DMARC (доставляемость)

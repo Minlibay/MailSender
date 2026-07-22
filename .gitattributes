@@ -1,0 +1,5 @@
+# Хранить и выкладывать текстовые файлы с LF — проект разворачивается на Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.svg text eol=lf

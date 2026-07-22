@@ -1,0 +1,20 @@
+services:
+  mailsender:
+    build: .
+    container_name: mailsender
+    restart: unless-stopped
+    ports:
+      # Только localhost: наружу доступ через nginx+HTTPS (см. DEPLOY.md).
+      # Docker публикует порты в обход ufw, поэтому привязка к 127.0.0.1 —
+      # надёжный способ не выставить панель в интернет напрямую.
+      # Для временного доступа по http://IP:8000 замените на "0.0.0.0:8000:8000".
+      - "127.0.0.1:8000:8000"
+    environment:
+      # ОБЯЗАТЕЛЬНО задайте пароль в .env — это общий ключ от панели.
+      MAILSENDER_ACCESS_PASSWORD: "${MAILSENDER_ACCESS_PASSWORD:?Задайте MAILSENDER_ACCESS_PASSWORD в .env}"
+      # Необязательно: пароль SMTP можно передать секретом, а не вводить в UI.
+      MAILSENDER_SMTP_PASSWORD: "${MAILSENDER_SMTP_PASSWORD:-}"
+      MAILSENDER_DATA_DIR: /data
+    volumes:
+      # БД, настройки и пароль SMTP переживают пересборку контейнера
+      - ./data:/data

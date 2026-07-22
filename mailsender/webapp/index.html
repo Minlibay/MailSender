@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MailSender</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="bg"></div>
+
+  <div id="app">
+    <!-- боковой рельс -->
+    <aside id="rail">
+      <div class="logo">M</div>
+      <button class="nav-btn active" data-page="board" title="Доска">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="16" rx="1"/></svg>
+      </button>
+      <button class="nav-btn" data-page="contacts" title="Контакты">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
+      </button>
+      <button class="nav-btn" data-page="finder" title="Поиск почты на сайте">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9S9.5 5.5 12 3z"/></svg>
+      </button>
+      <button class="nav-btn" data-page="compose" title="Письмо и рассылка">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+      </button>
+      <button class="nav-btn" data-page="replies" title="Ответы">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <div class="rail-spacer"></div>
+      <button class="nav-btn" data-page="settings" title="Настройки">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 6.7 19.5l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4.6 15H4.5a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1A2 2 0 1 1 8.5 5.4l.1.1a1.6 1.6 0 0 0 1.8.3H10.5a1.6 1.6 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V10.5a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+      </button>
+    </aside>
+
+    <!-- основная область -->
+    <div id="main">
+      <div id="topbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+          <input id="search" placeholder="Поиск контактов…">
+        </div>
+        <div class="topbar-spacer"></div>
+        <button class="btn" id="btn-import">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0-12 4 4m-4-4-4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Импорт
+        </button>
+        <button class="btn btn-primary" id="btn-new">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          Новый контакт
+        </button>
+      </div>
+
+      <div id="pagehead">
+        <h1 id="page-title">Контакты</h1>
+        <div class="seg" id="board-seg" style="display:none">
+          <button class="active" data-view="board">Доска</button>
+          <button data-view="list">Список</button>
+        </div>
+      </div>
+
+      <div id="content">
+        <!-- ДОСКА -->
+        <section class="page active" id="page-board">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px">
+            <div id="board-followups" class="hint"></div>
+            <button class="btn" id="btn-board-sync">↻ Проверить ответы</button>
+          </div>
+          <div class="board" id="board"></div>
+        </section>
+
+        <!-- КОНТАКТЫ (список) -->
+        <section class="page" id="page-contacts">
+          <div class="stat-row" id="contacts-stats"></div>
+          <div class="panel">
+            <div class="row" style="justify-content:space-between;margin-bottom:12px">
+              <h2>База контактов</h2>
+              <div class="row">
+                <button class="btn" id="btn-import2">Импорт из файла…</button>
+                <button class="btn" id="btn-add2">Добавить</button>
+              </div>
+            </div>
+            <table>
+              <thead><tr><th>Имя</th><th>Email</th><th>Компания</th><th>Статус</th><th></th></tr></thead>
+              <tbody id="contacts-body"></tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <h2>Стоп-лист</h2>
+            <div class="sub">Эти адреса никогда не получают писем и пропускаются при импорте.</div>
+            <table>
+              <thead><tr><th>Email</th><th>Причина</th><th>Дата</th><th></th></tr></thead>
+              <tbody id="supp-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ПОИСК ПОЧТЫ НА САЙТЕ -->
+        <section class="page" id="page-finder">
+          <div class="panel">
+            <h2>Поиск контактного адреса компании</h2>
+            <div class="sub">Вставьте адрес сайта компании — найдём публичные адреса (info@, hello@, pr@) на главной и страницах контактов. Один сайт за раз; результат добавляете в контакты вручную.</div>
+            <div class="row" style="margin-top:6px">
+              <input class="field" id="find-url" placeholder="company.ru или https://company.ru/contacts" style="flex:1">
+              <button class="btn btn-primary" id="btn-find">Найти</button>
+            </div>
+            <div id="find-status" class="hint" style="margin-top:10px"></div>
+          </div>
+          <div class="panel" id="find-results" style="display:none">
+            <div class="row" style="justify-content:space-between;margin-bottom:10px">
+              <h2>Найденные адреса</h2>
+              <button class="btn btn-primary" id="btn-add-found">Добавить выбранные</button>
+            </div>
+            <div id="find-primary"></div>
+            <div id="find-other-wrap" style="display:none">
+              <div class="sep"></div>
+              <div class="sub">Прочие адреса со страницы (другой домен — проверьте, что это та же компания):</div>
+              <div id="find-other"></div>
+            </div>
+            <div class="hint mono" id="find-pages" style="margin-top:12px"></div>
+          </div>
+        </section>
+
+        <!-- ПИСЬМО И РАССЫЛКА -->
+        <section class="page" id="page-compose">
+          <div class="compose">
+            <div class="panel">
+              <h2>Письмо</h2>
+              <div class="sub">Плейсхолдеры: {{first_name}}, {{last_name}}, {{company}}, {{email}} · дефолт: {{first_name|коллеги}}</div>
+              <div class="row" style="margin:10px 0;gap:8px">
+                <select id="tpl-select" style="flex:1"><option value="">— шаблон —</option></select>
+                <button class="btn btn-ghost" id="btn-tpl-load" title="Загрузить в редактор">Загрузить</button>
+                <button class="btn btn-ghost" id="btn-tpl-save" title="Сохранить текущее как шаблон">Сохранить как…</button>
+                <button class="btn btn-ghost" id="btn-tpl-del" title="Удалить шаблон">✕</button>
+              </div>
+              <label class="hint">Тема</label>
+              <input class="field" id="c-subject" placeholder="{{company}} — предложение о сотрудничестве" style="margin:6px 0 12px">
+              <label class="hint">Текст письма</label>
+              <textarea id="c-text" style="min-height:200px;margin:6px 0 12px" placeholder="Здравствуйте, {{first_name|коллеги}}!&#10;&#10;Пишу по поводу…"></textarea>
+              <label class="hint">HTML-версия (необязательно)</label>
+              <textarea id="c-html" style="min-height:80px;margin:6px 0 8px" placeholder="<p>Здравствуйте, {{first_name|коллеги}}!</p>"></textarea>
+              <div class="hint">Каждому уходит одно персональное письмо с рабочего ящика. Подпись (организация/адрес) добавляется, только если заполнена в настройках.</div>
+            </div>
+            <div>
+              <div class="panel">
+                <div class="row" style="justify-content:space-between;margin-bottom:10px">
+                  <h2>Превью</h2>
+                  <button class="btn btn-ghost" id="btn-preview">Обновить</button>
+                </div>
+                <div class="preview-box" id="preview">Заполните письмо и нажмите «Обновить».</div>
+              </div>
+              <div class="panel">
+                <h2>Рассылка</h2>
+                <div class="sub" id="send-recipients">—</div>
+                <div class="row" style="margin-bottom:8px">
+                  <button class="btn" id="btn-test">Тест себе</button>
+                  <button class="btn btn-primary" id="btn-send">Начать рассылку</button>
+                  <button class="btn" id="btn-stop" disabled>Стоп</button>
+                </div>
+                <div class="progress-wrap"><div class="progress-bar" id="progress"></div></div>
+                <div id="send-status" class="hint">Готово.</div>
+                <div class="log" id="send-log"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ОТВЕТЫ -->
+        <section class="page" id="page-replies">
+          <div class="panel">
+            <div class="row" style="justify-content:space-between;margin-bottom:12px">
+              <h2>Ответы (IMAP)</h2>
+              <div class="row">
+                <button class="btn" id="btn-fetch">Загрузить</button>
+                <button class="btn" id="btn-sync">Собрать отписки</button>
+              </div>
+            </div>
+            <div class="sub">IMAP только читает почту (не удаляет). Письма-отписки подсвечены.</div>
+            <table>
+              <thead><tr><th>От</th><th>Тема</th><th>Дата</th><th>Текст</th><th></th></tr></thead>
+              <tbody id="replies-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- НАСТРОЙКИ -->
+        <section class="page" id="page-settings">
+          <div class="panel">
+            <h2>Отправка (SMTP)</h2>
+            <div class="form-grid" style="margin-top:12px">
+              <label>Хост</label><input class="field" id="s-smtp-host" placeholder="smtp.company.ru">
+              <label>Порт</label><input class="field" id="s-smtp-port" type="number" value="587">
+              <label>Логин</label><input class="field" id="s-smtp-user">
+              <label>Пароль</label><input class="field" id="s-smtp-pass" type="password" placeholder="хранится в системном хранилище">
+              <label>Шифрование</label>
+              <div class="row">
+                <label class="check"><input type="radio" name="enc" id="s-tls" checked> STARTTLS (587)</label>
+                <label class="check"><input type="radio" name="enc" id="s-ssl"> SSL/TLS (465)</label>
+              </div>
+              <label></label><div><button class="btn" id="btn-test-smtp">Проверить SMTP</button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>Отправитель и подпись</h2>
+            <div class="sub">Письмо уходит как обычное личное деловое. Организация и адрес, если заполнены, добавляются подписью в конце — можно оставить пустыми.</div>
+            <div class="form-grid">
+              <label>Имя отправителя</label><input class="field" id="s-from-name">
+              <label>Email отправителя</label><input class="field" id="s-from-email" placeholder="sales@company.ru">
+              <label>Reply-To</label><input class="field" id="s-reply">
+              <label>Организация (подпись)</label><input class="field" id="s-org">
+              <label>Адрес (подпись)</label><input class="field" id="s-postal">
+            </div>
+            <label class="hint" style="display:block;margin-top:12px">Личная подпись менеджера (имя, должность, телефон) — если заполнена, используется вместо организации/адреса:</label>
+            <textarea id="s-signature" style="margin-top:6px;min-height:80px" placeholder="Иван Петров&#10;Менеджер по продажам, ООО «Компания»&#10;+7 900 000-00-00"></textarea>
+          </div>
+          <div class="panel">
+            <h2>Чтение ответов (IMAP) — опционально</h2>
+            <div class="form-grid">
+              <label>Хост</label><input class="field" id="s-imap-host" placeholder="imap.company.ru">
+              <label>Порт</label><input class="field" id="s-imap-port" type="number" value="993">
+              <label>Логин</label><input class="field" id="s-imap-user">
+              <label></label><div class="row"><label class="check"><input type="checkbox" id="s-imap-ssl" checked> SSL/TLS</label>
+                <button class="btn" id="btn-test-imap">Проверить IMAP</button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="row" style="justify-content:space-between;margin-bottom:6px">
+              <h2>Доставляемость домена (SPF / DKIM / DMARC)</h2>
+              <button class="btn" id="btn-deliver">Проверить домен</button>
+            </div>
+            <div class="sub">Три DNS-записи решают, попадёт письмо во «Входящие» или в спам. Проверяем домен из email отправителя.</div>
+            <div id="deliver-result"></div>
+          </div>
+          <div class="panel">
+            <h2>Лимиты и темп рассылки</h2>
+            <div class="form-grid">
+              <label>Писем в час</label><input class="field" id="s-per-hour" type="number" value="100">
+              <label>Писем в сутки</label><input class="field" id="s-per-day" type="number" value="500">
+              <label>Пауза между письмами, с</label><input class="field" id="s-delay" type="number" step="0.5" value="3">
+              <label>Размер пачки</label><input class="field" id="s-batch" type="number" value="50">
+              <label>Пауза между пачками, с</label><input class="field" id="s-batch-pause" type="number" value="60">
+            </div>
+          </div>
+          <div class="row" style="justify-content:flex-end">
+            <button class="btn btn-primary" id="btn-save-settings">Сохранить настройки</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="fab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M3 12h18"/></svg>
+      Новая рассылка
+    </div>
+  </div>
+
+  <!-- модалка -->
+  <div class="modal-back" id="modal-back">
+    <div class="modal" id="modal"></div>
+  </div>
+  <div id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
