@@ -32,6 +32,8 @@ def main() -> int:
         background_color="#20242a",
     )
     api.window = window
+    # фоновый планировщик цепочек писем
+    api.start_scheduler()
 
     try:
         # gui=None — pywebview сам выберет доступный движок (WebView2 на Windows).

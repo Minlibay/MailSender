@@ -16,11 +16,23 @@ class SmtpError(Exception):
     """Ошибка отправки/соединения SMTP с человекочитаемым текстом."""
 
 
+def _decode(v) -> str:
+    """Ответ сервера в smtplib приходит байтами — приводим к строке."""
+    if isinstance(v, bytes):
+        return v.decode("utf-8", errors="replace")
+    return str(v)
+
+
 class SmtpSender:
-    def __init__(self, smtp_cfg, sender_cfg, password: str):
+    # Таймаут по умолчанию на все сетевые операции (connect/ehlo/starttls/login).
+    # Ограничивает «бесконечное» ожидание при недоступном хосте или неверном порте.
+    DEFAULT_TIMEOUT = 30
+
+    def __init__(self, smtp_cfg, sender_cfg, password: str, timeout: float | None = None):
         self._cfg = smtp_cfg
         self._sender = sender_cfg
         self._password = password
+        self._timeout = timeout or self.DEFAULT_TIMEOUT
         self._conn: smtplib.SMTP | smtplib.SMTP_SSL | None = None
 
     # ---- соединение ----
@@ -29,12 +41,13 @@ class SmtpSender:
         cfg = self._cfg
         if not cfg.host:
             raise SmtpError("Не указан SMTP-хост")
+        timeout = self._timeout
         try:
             if cfg.use_ssl:
                 ctx = ssl.create_default_context()
-                self._conn = smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=30, context=ctx)
+                self._conn = smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=timeout, context=ctx)
             else:
-                self._conn = smtplib.SMTP(cfg.host, cfg.port, timeout=30)
+                self._conn = smtplib.SMTP(cfg.host, cfg.port, timeout=timeout)
                 self._conn.ehlo()
                 if cfg.use_tls:
                     ctx = ssl.create_default_context()
@@ -42,8 +55,17 @@ class SmtpSender:
                     self._conn.ehlo()
             if cfg.username:
                 self._conn.login(cfg.username, self._password)
+        except smtplib.SMTPAuthenticationError as e:
+            raise SmtpError(
+                "SMTP отклонил логин/пароль. Проверьте логин и пароль "
+                "(для Gmail/Яндекс и т.п. нужен пароль приложения, а не обычный). "
+                f"Ответ сервера: {e.smtp_code} {_decode(e.smtp_error)}") from e
+        except smtplib.SMTPNotSupportedError as e:
+            raise SmtpError(f"Сервер не поддерживает нужный режим: {e}") from e
         except (smtplib.SMTPException, ssl.SSLError, OSError) as e:
-            raise SmtpError(f"Не удалось подключиться к SMTP: {e}") from e
+            raise SmtpError(
+                f"Не удалось подключиться к SMTP ({cfg.host}:{cfg.port}): {e}. "
+                "Проверьте хост, порт и режим шифрования (STARTTLS 587 / SSL 465).") from e
 
     def close(self) -> None:
         if self._conn is not None:
@@ -98,9 +120,20 @@ class SmtpSender:
         self.send(msg)
 
 
-def test_connection(smtp_cfg, sender_cfg, password: str) -> tuple[bool, str]:
-    """Проверить настройки соединения. Возвращает (успех, сообщение)."""
-    sender = SmtpSender(smtp_cfg, sender_cfg, password)
+def test_connection(smtp_cfg, sender_cfg, password: str,
+                    timeout: float = 20) -> tuple[bool, str]:
+    """Проверить настройки соединения. Возвращает (успех, сообщение).
+
+    Таймаут короче, чем при рассылке: проверка должна возвращаться быстро,
+    а не «висеть», если хост/порт указаны неверно.
+    """
+    if not smtp_cfg.host:
+        return False, "Укажите SMTP-хост (раздел «Настройки»)."
+    if not smtp_cfg.username:
+        return False, "Укажите логин SMTP."
+    if not password:
+        return False, "Введите пароль SMTP (поле пустое)."
+    sender = SmtpSender(smtp_cfg, sender_cfg, password, timeout=timeout)
     try:
         sender.connect()
         sender.close()

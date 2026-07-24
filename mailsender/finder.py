@@ -212,3 +212,92 @@ def find_many_sites(urls) -> dict:
         "truncated": truncated,
         "max_sites": MAX_SITES,
     }
+
+
+# ---------------- генерация типовых (ролевых) адресов ----------------
+# В отличие от поиска, здесь мы НЕ ходим на сайт, а собираем вероятные общие
+# ящики компании из её домена: info@, sales@, support@ и т.п. Это удобно,
+# когда персональный адрес неизвестен, а написать в компанию нужно.
+
+DEFAULT_ROLES = [
+    "info", "sales", "hello", "contact", "office", "support",
+    "zakaz", "order", "mail", "pr", "marketing", "welcome",
+]
+
+
+def _domain_from(raw: str) -> str | None:
+    """Извлечь голый домен из URL, адреса почты или самого домена."""
+    s = (raw or "").strip().strip("<>").lower()
+    if not s:
+        return None
+    if "@" in s:                       # прислали email — берём его домен
+        s = s.split("@", 1)[1]
+    if "://" in s or s.startswith("www."):
+        s = _normalize_url(s)
+        s = urlparse(s).netloc or s
+    s = s.split("/")[0].split("?")[0].strip()
+    s = _registrable(s)
+    # простая проверка «похоже на домен»
+    if "." not in s or " " in s or "@" in s:
+        return None
+    return s
+
+
+def generate_role_emails(domains, roles=None) -> dict:
+    """Сгенерировать ролевые адреса для списка доменов.
+
+    domains — строка (по одному в строке/через запятую) или список.
+    roles   — необязательный список ролей (по умолчанию DEFAULT_ROLES).
+    Ничего не отправляет и не проверяет по сети: только формирует адреса.
+    """
+    if isinstance(domains, str):
+        items = domains.replace(",", "\n").splitlines()
+    else:
+        items = list(domains or [])
+
+    # набор ролей: очищаем, убираем дубли, сохраняем порядок
+    if roles:
+        if isinstance(roles, str):
+            roles = roles.replace(",", "\n").split()
+        role_list = []
+        seen_r: set[str] = set()
+        for r in roles:
+            r = (r or "").strip().lower().lstrip("@").split("@")[0]
+            if r and r not in seen_r:
+                seen_r.add(r)
+                role_list.append(r)
+        role_list = role_list or list(DEFAULT_ROLES)
+    else:
+        role_list = list(DEFAULT_ROLES)
+
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for u in items:
+        d = _domain_from(u)
+        if d and d not in seen:
+            seen.add(d)
+            cleaned.append(d)
+
+    if not cleaned:
+        return {"ok": False, "message": "Укажите хотя бы один домен или сайт"}
+
+    truncated = len(cleaned) > MAX_SITES
+    cleaned = cleaned[:MAX_SITES]
+
+    sites = []
+    total = 0
+    for d in cleaned:
+        emails = [f"{role}@{d}" for role in role_list]
+        total += len(emails)
+        sites.append({"input": d, "ok": True, "domain": d,
+                      "emails": emails, "count": len(emails)})
+
+    return {
+        "ok": True,
+        "sites": sites,
+        "total_found": total,
+        "sites_count": len(cleaned),
+        "roles": role_list,
+        "truncated": truncated,
+        "max_sites": MAX_SITES,
+    }

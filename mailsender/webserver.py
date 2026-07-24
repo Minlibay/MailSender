@@ -37,7 +37,7 @@ COOKIE = "ms_session"
 SESSION_TTL = 7 * 24 * 3600
 
 # Методы Api, которые НЕ отдаём наружу (служебные/desktop-специфичные).
-_HIDDEN = {"pick_import_file", "shutdown"}
+_HIDDEN = {"pick_import_file", "shutdown", "start_scheduler"}
 
 
 # ---------------- SSE-брокер (мост поток→event loop) ----------------
@@ -97,9 +97,16 @@ app = FastAPI(title="MailSender")
 @app.on_event("startup")
 async def _startup():
     broadcaster.bind_loop(asyncio.get_running_loop())
+    # фоновый планировщик цепочек писем (отправка шагов по задержкам)
+    api.start_scheduler()
     if not AUTH_ENABLED:
         print("[MailSender] ВНИМАНИЕ: MAILSENDER_ACCESS_PASSWORD не задан — "
               "вход без пароля. Для VPS обязательно задайте пароль.")
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    api.shutdown()
 
 
 # ---------------- аутентификация ----------------

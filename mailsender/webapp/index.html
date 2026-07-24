@@ -25,6 +25,9 @@
       <button class="nav-btn" data-page="compose" title="Письмо и рассылка">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
       </button>
+      <button class="nav-btn" data-page="sequences" title="Цепочки писем">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="14" height="9" rx="2"/><path d="M8 20h9a2 2 0 0 0 2-2v-6"/><path d="M12 13v3.5"/></svg>
+      </button>
       <button class="nav-btn" data-page="replies" title="Ответы">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>
       </button>
@@ -114,6 +117,26 @@
             </div>
             <div id="find-sites"></div>
           </div>
+
+          <!-- Генерация ролевых (общих) адресов по домену -->
+          <div class="panel">
+            <h2>Сгенерировать общие адреса по домену</h2>
+            <div class="sub">Домены или сайты — по одному в строке, до 10. По каждому соберём типовые общие ящики (info@, sales@, support@…). Сеть не используется — только формируем адреса, дальше отметьте нужные и добавьте в контакты.</div>
+            <textarea id="gen-domains" style="margin-top:8px;min-height:90px" placeholder="company.ru&#10;https://acme.io&#10;beta-corp.ru"></textarea>
+            <label class="hint" style="display:block;margin-top:10px">Роли (через запятую) — оставьте пустым для набора по умолчанию:</label>
+            <input class="field" id="gen-roles" style="margin-top:6px" placeholder="info, sales, support, office, hello">
+            <div class="row" style="justify-content:space-between;margin-top:8px">
+              <div id="gen-status" class="hint"></div>
+              <button class="btn btn-primary" id="btn-gen">Сгенерировать</button>
+            </div>
+          </div>
+          <div class="panel" id="gen-results" style="display:none">
+            <div class="row" style="justify-content:space-between;margin-bottom:10px">
+              <h2>Сгенерированные адреса</h2>
+              <button class="btn btn-primary" id="btn-add-gen">Добавить выбранные</button>
+            </div>
+            <div id="gen-list"></div>
+          </div>
         </section>
 
         <!-- ПИСЬМО И РАССЫЛКА -->
@@ -157,6 +180,23 @@
                 <div class="log" id="send-log"></div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- ЦЕПОЧКИ ПИСЕМ -->
+        <section class="page" id="page-sequences">
+          <div class="panel">
+            <div class="row" style="justify-content:space-between;margin-bottom:8px">
+              <h2>Цепочки писем</h2>
+              <button class="btn btn-primary" id="btn-seq-new">Новая цепочка</button>
+            </div>
+            <div class="sub">Последовательность писем с задержками. Первый шаг уходит при добавлении контактов, следующие — автоматически через заданное число дней, но только тем, кто ещё не ответил и не в стоп-листе. Ответы подтягиваются через IMAP (вкладка «Ответы»).</div>
+            <div id="seq-list" style="margin-top:14px"></div>
+          </div>
+          <div class="panel">
+            <h2>Журнал планировщика</h2>
+            <div class="sub">Что делает фоновый отправщик цепочек (обновляется в реальном времени).</div>
+            <div class="log" id="seq-log" style="margin-top:8px"></div>
           </div>
         </section>
 

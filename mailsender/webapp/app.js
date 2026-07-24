@@ -13,19 +13,32 @@ function api() { return BACKEND; }
 
 // HTTP-прокси: api().method(a,b) -> POST /api/method  с телом [a,b]
 function makeHttpApi() {
-  const call = (method, args) => fetch("/api/" + method, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  }).then(async r => {
-    if (r.status === 401) { showLogin(); throw new Error("unauthorized"); }
-    return r.json();
-  });
+  const call = async (method, args) => {
+    let r;
+    try {
+      r = await fetch("/api/" + method, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(args),
+      });
+    } catch (e) {
+      // Сеть недоступна/сервер не отвечает — не бросаем, а возвращаем понятную
+      // ошибку, чтобы кнопки в UI не «зависали» в состоянии загрузки.
+      return { ok: false, message: "Нет связи с сервером. Проверьте, запущен ли MailSender." };
+    }
+    if (r.status === 401) { showLogin(); return { ok: false, message: "Требуется вход" }; }
+    try {
+      return await r.json();
+    } catch (e) {
+      return { ok: false, message: `Ошибка сервера (${r.status})` };
+    }
+  };
   return new Proxy({}, { get: (_, method) => (...args) => call(method, args) });
 }
 
 const PAGE_TITLES = {
   board: "Контакты", contacts: "Контакты", finder: "Поиск почты",
-  compose: "Письмо и рассылка", replies: "Ответы", settings: "Настройки",
+  compose: "Письмо и рассылка", sequences: "Цепочки писем",
+  replies: "Ответы", settings: "Настройки",
 };
 
 let state = { page: "board", contacts: [], search: "" };
@@ -78,6 +91,7 @@ function showPage(page) {
   if (page === "board") loadBoard();
   if (page === "contacts") loadContacts();
   if (page === "compose") loadComposeMeta();
+  if (page === "sequences") loadSequences();
   if (page === "settings") loadSettings();
 }
 
@@ -431,9 +445,14 @@ $("#btn-preview").onclick = async () => {
 
 $("#btn-test").onclick = async () => {
   const btn = $("#btn-test"); btn.disabled = true; btn.textContent = "Отправка…";
-  const r = await api().send_test($("#c-subject").value, $("#c-text").value, $("#c-html").value);
-  btn.disabled = false; btn.textContent = "Тест себе";
-  toast(r.message, r.ok ? "ok" : "err");
+  try {
+    const r = await api().send_test($("#c-subject").value, $("#c-text").value, $("#c-html").value);
+    toast(r.message, r.ok ? "ok" : "err");
+  } catch (e) {
+    toast("Ошибка отправки: " + e, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "Тест себе";
+  }
 };
 
 $("#btn-send").onclick = async () => {
@@ -483,6 +502,187 @@ window.onCampaignLog = function (l) {
   line.textContent = l.message;
   $("#send-log").appendChild(line);
   $("#send-log").scrollTop = $("#send-log").scrollHeight;
+};
+
+/* ---------------- ЦЕПОЧКИ ПИСЕМ ---------------- */
+
+const SEQ_STATUS_LABEL = { active: "Активна", paused: "На паузе", archived: "В архиве" };
+
+async function loadSequences() {
+  const list = await api().list_sequences();
+  const box = $("#seq-list");
+  if (!list.length) {
+    box.innerHTML = `<div class="empty-hint">Цепочек пока нет. Создайте первую — задайте письма и задержки, затем добавьте контактов.</div>`;
+    return;
+  }
+  box.innerHTML = list.map(s => {
+    const st = s.stats || {};
+    const paused = s.status !== "active";
+    return `<div class="panel" style="margin:0 0 12px;padding:14px 16px">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <div class="row" style="gap:8px">
+            <b style="font-size:15px">${esc(s.name)}</b>
+            <span class="tag ${s.status === "active" ? "active" : "sent"}">${SEQ_STATUS_LABEL[s.status] || s.status}</span>
+          </div>
+          <div class="hint" style="margin-top:4px">
+            Шагов: ${s.steps} · в цепочке: ${st.active || 0} активных,
+            завершили: ${st.completed || 0}, ответили: ${st.replied || 0},
+            отправлено писем: ${st.sent || 0}${st.failed ? `, ошибок: ${st.failed}` : ""}
+          </div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" data-seq-enroll="${s.id}">Добавить активные контакты</button>
+        <button class="btn" data-seq-edit="${s.id}">Изменить</button>
+        <button class="btn" data-seq-toggle="${s.id}" data-cur="${s.status}">${paused ? "Возобновить" : "Пауза"}</button>
+        <button class="btn btn-ghost" data-seq-del="${s.id}">Удалить</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  $$("#seq-list [data-seq-enroll]").forEach(b => b.onclick = () => enrollSequence(+b.dataset.seqEnroll));
+  $$("#seq-list [data-seq-edit]").forEach(b => b.onclick = () => editSequence(+b.dataset.seqEdit));
+  $$("#seq-list [data-seq-del]").forEach(b => b.onclick = () => deleteSequence(+b.dataset.seqDel));
+  $$("#seq-list [data-seq-toggle]").forEach(b => b.onclick = async () => {
+    const next = b.dataset.cur === "active" ? "paused" : "active";
+    await api().set_sequence_status(+b.dataset.seqToggle, next);
+    toast(next === "active" ? "Цепочка возобновлена" : "Цепочка на паузе", "ok");
+    loadSequences();
+  });
+}
+
+// Одна строка-редактор шага цепочки.
+function seqStepHtml(step, i) {
+  const s = step || {};
+  return `<div class="seq-step panel" style="margin:0 0 10px;padding:12px 14px">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <b>Шаг ${i + 1}</b>
+      <button class="btn btn-ghost" data-step-del="${i}" title="Удалить шаг">✕</button>
+    </div>
+    <div class="row" style="gap:8px;align-items:center;margin-bottom:8px">
+      <label class="hint" style="white-space:nowrap">Задержка перед шагом (дней):</label>
+      <input class="field seq-delay" type="number" min="0" step="0.5" style="width:110px"
+        value="${s.delay_days != null ? s.delay_days : (i === 0 ? 0 : 3)}">
+      <span class="hint">${i === 0 ? "0 = сразу при добавлении контакта" : "отсчёт от предыдущего письма"}</span>
+    </div>
+    <input class="field seq-subject" placeholder="Тема (можно {{company}}, {{first_name|коллеги}})"
+      style="margin-bottom:8px" value="${esc(s.subject || "")}">
+    <textarea class="seq-text" style="min-height:90px;margin-bottom:8px"
+      placeholder="Текст письма. Плейсхолдеры: {{first_name|коллеги}}, {{company}}…">${esc(s.body_text || "")}</textarea>
+    <textarea class="seq-html" style="min-height:50px"
+      placeholder="HTML-версия (необязательно)">${esc(s.body_html || "")}</textarea>
+  </div>`;
+}
+
+function seqEditorModal(seq, steps) {
+  const stepsHtml = (steps.length ? steps : [{ delay_days: 0 }]).map(seqStepHtml).join("");
+  modal(`
+    <h3>${seq ? "Изменить цепочку" : "Новая цепочка"}</h3>
+    <label class="hint">Название</label>
+    <input class="field" id="seq-name" style="margin:6px 0 14px" placeholder="Например: B2B-аутрич, 3 касания" value="${esc(seq ? seq.name : "")}">
+    <label class="hint">Шаги (письма по порядку)</label>
+    <div id="seq-steps" style="margin-top:8px">${stepsHtml}</div>
+    <button class="btn" id="seq-add-step" style="margin-top:4px">+ Добавить шаг</button>
+    <div class="actions">
+      <button class="btn" id="m-cancel">Отмена</button>
+      <button class="btn btn-primary" id="m-ok">Сохранить</button>
+    </div>`);
+
+  const rebindDel = () => $$("#seq-steps [data-step-del]").forEach(b => b.onclick = () => {
+    const nodes = $$("#seq-steps .seq-step");
+    if (nodes.length <= 1) { toast("Нужен хотя бы один шаг", "err"); return; }
+    nodes[+b.dataset.stepDel].remove();
+    renumber();
+  });
+  const renumber = () => {
+    $$("#seq-steps .seq-step").forEach((n, i) => {
+      n.querySelector("b").textContent = "Шаг " + (i + 1);
+      n.querySelector("[data-step-del]").dataset.stepDel = i;
+    });
+    rebindDel();
+  };
+  rebindDel();
+
+  $("#seq-add-step").onclick = () => {
+    const holder = $("#seq-steps");
+    const div = document.createElement("div");
+    div.innerHTML = seqStepHtml({ delay_days: 3 }, holder.children.length);
+    holder.appendChild(div.firstElementChild);
+    renumber();
+  };
+  $("#m-cancel").onclick = closeModal;
+  $("#m-ok").onclick = async () => {
+    const name = $("#seq-name").value.trim();
+    if (!name) { toast("Укажите название", "err"); return; }
+    const steps = $$("#seq-steps .seq-step").map(n => ({
+      delay_days: +n.querySelector(".seq-delay").value || 0,
+      subject: n.querySelector(".seq-subject").value,
+      body_text: n.querySelector(".seq-text").value,
+      body_html: n.querySelector(".seq-html").value,
+    }));
+    const r = await api().save_sequence(name, steps, seq ? seq.id : null);
+    if (r.ok) { closeModal(); toast("Цепочка сохранена", "ok"); loadSequences(); }
+    else toast(r.message, "err");
+  };
+}
+
+$("#btn-seq-new").onclick = () => seqEditorModal(null, []);
+
+async function editSequence(id) {
+  const r = await api().get_sequence(id);
+  if (!r.ok) { toast(r.message, "err"); return; }
+  seqEditorModal(r.sequence, r.steps);
+}
+
+async function enrollSequence(id) {
+  const s = await api().contacts_summary();
+  modal(`
+    <h3>Добавить контакты в цепочку</h3>
+    <p style="color:var(--text-muted);line-height:1.6">
+      Добавить всех активных контактов (<b style="color:var(--text)">${s.active}</b>) в цепочку?<br>
+      Первое письмо уйдёт при ближайшем проходе планировщика, следующие — по задержкам.
+      Уже добавленные и адреса из стоп-листа пропускаются.</p>
+    <div class="actions">
+      <button class="btn" id="m-cancel">Отмена</button>
+      <button class="btn btn-primary" id="m-ok">Добавить</button>
+    </div>`);
+  $("#m-cancel").onclick = closeModal;
+  $("#m-ok").onclick = async () => {
+    closeModal();
+    const r = await api().enroll_active(id);
+    if (!r.ok) { toast(r.message, "err"); return; }
+    toast(`Добавлено: ${r.added}` + (r.skipped ? `, пропущено: ${r.skipped}` : ""), "ok");
+    loadSequences();
+  };
+}
+
+async function deleteSequence(id) {
+  modal(`
+    <h3>Удалить цепочку?</h3>
+    <p style="color:var(--text-muted);line-height:1.6">Цепочка и все её записи об участниках будут удалены. Уже отправленные письма это не отзовёт.</p>
+    <div class="actions">
+      <button class="btn" id="m-cancel">Отмена</button>
+      <button class="btn btn-primary" id="m-ok">Удалить</button>
+    </div>`);
+  $("#m-cancel").onclick = closeModal;
+  $("#m-ok").onclick = async () => {
+    await api().delete_sequence(id);
+    closeModal(); toast("Цепочка удалена", "ok"); loadSequences();
+  };
+}
+
+// журнал планировщика цепочек (из Python через SSE/desktop)
+window.onSequenceLog = function (l) {
+  const log = $("#seq-log");
+  if (!log) return;
+  const cls = l.level === "error" ? "err" : l.level === "warn" ? "warn" : "";
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = `${new Date().toLocaleTimeString("ru")} · ${l.message}`;
+  log.appendChild(line);
+  while (log.children.length > 100) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
 };
 
 /* ---------------- ОТВЕТЫ ---------------- */
@@ -559,7 +759,7 @@ $("#btn-find").onclick = async () => {
 };
 
 $("#btn-add-found").onclick = async () => {
-  const checked = $$(".find-cb").filter(c => c.checked);
+  const checked = $$("#find-sites .find-cb").filter(c => c.checked);
   if (!checked.length) { toast("Отметьте адреса галочкой", "err"); return; }
   // группируем по компании (домену) — у каждого контакта своя компания
   const byCompany = {};
@@ -576,6 +776,53 @@ $("#btn-add-found").onclick = async () => {
   $("#find-results").style.display = "none";
   $("#find-urls").value = "";
   $("#find-status").textContent = "";
+};
+
+/* ---------------- ГЕНЕРАЦИЯ РОЛЕВЫХ АДРЕСОВ ---------------- */
+
+function genSiteBlock(site) {
+  const rows = site.emails.map(e => emailRow(e, site.domain)).join("");
+  return `<div class="find-site">
+    <div class="find-site-head">✉ ${esc(site.domain)} <span class="chip">${site.count}</span></div>
+    ${rows}</div>`;
+}
+
+$("#btn-gen").onclick = async () => {
+  const domains = $("#gen-domains").value.trim();
+  if (!domains) { toast("Вставьте хотя бы один домен", "err"); return; }
+  const roles = $("#gen-roles").value.trim();
+  const btn = $("#btn-gen"); btn.disabled = true; btn.textContent = "Генерирую…";
+  let r;
+  try { r = await api().generate_role_emails(domains, roles || null); }
+  catch (e) { r = { ok: false, message: String(e) }; }
+  finally { btn.disabled = false; btn.textContent = "Сгенерировать"; }
+  if (!r.ok) { $("#gen-status").textContent = ""; toast(r.message || "Не удалось", "err"); return; }
+  $("#gen-status").textContent =
+    `Доменов: ${r.sites_count}, адресов: ${r.total_found}`
+    + (r.truncated ? ` · показаны первые ${r.max_sites}` : "");
+  // переиспользуем контейнер результатов генерации: те же чекбоксы .find-cb
+  $("#gen-list").innerHTML = r.sites.map(genSiteBlock).join("");
+  $("#gen-results").style.display = "";
+  if (r.truncated) toast(`Обработаны первые ${r.max_sites} доменов из списка`, "ok");
+};
+
+$("#btn-add-gen").onclick = async () => {
+  const checked = $$("#gen-list .find-cb").filter(c => c.checked);
+  if (!checked.length) { toast("Отметьте адреса галочкой", "err"); return; }
+  const byCompany = {};
+  checked.forEach(c => {
+    const co = c.dataset.company || "";
+    (byCompany[co] ||= []).push(c.value);
+  });
+  let added = 0, skipped = 0;
+  for (const [company, emails] of Object.entries(byCompany)) {
+    const r = await api().add_found_emails(emails, company);
+    if (r.ok) { added += r.added; skipped += r.skipped; }
+  }
+  toast(`Добавлено: ${added}` + (skipped ? `, пропущено: ${skipped}` : ""), "ok");
+  $("#gen-results").style.display = "none";
+  $("#gen-domains").value = "";
+  $("#gen-status").textContent = "";
 };
 
 /* ---------------- НАСТРОЙКИ ---------------- */
@@ -628,17 +875,28 @@ $("#btn-save-settings").onclick = async () => {
   toast("Настройки сохранены", "ok");
 };
 $("#btn-test-smtp").onclick = async () => {
-  await api().save_config(collectSettings());
   const btn = $("#btn-test-smtp"); btn.disabled = true; btn.textContent = "Проверка…";
-  const r = await api().test_smtp();
-  btn.disabled = false; btn.textContent = "Проверить SMTP";
-  toast(r.message, r.ok ? "ok" : "err");
+  try {
+    await api().save_config(collectSettings());
+    const r = await api().test_smtp();
+    toast(r.message, r.ok ? "ok" : "err");
+  } catch (e) {
+    toast("Ошибка проверки: " + e, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "Проверить SMTP";
+  }
 };
 $("#btn-deliver").onclick = async () => {
-  await api().save_config(collectSettings());
   const btn = $("#btn-deliver"); btn.disabled = true; btn.textContent = "Проверяю…";
-  const r = await api().check_deliverability();
-  btn.disabled = false; btn.textContent = "Проверить домен";
+  let r;
+  try {
+    await api().save_config(collectSettings());
+    r = await api().check_deliverability();
+  } catch (e) {
+    r = { ok: false, message: "Ошибка проверки: " + e };
+  } finally {
+    btn.disabled = false; btn.textContent = "Проверить домен";
+  }
   const box = $("#deliver-result");
   if (!r.ok) { box.innerHTML = `<div class="hint" style="color:var(--danger);margin-top:10px">${esc(r.message)}</div>`; return; }
   const row = (label, c) => {
@@ -654,11 +912,16 @@ $("#btn-deliver").onclick = async () => {
 };
 
 $("#btn-test-imap").onclick = async () => {
-  await api().save_config(collectSettings());
   const btn = $("#btn-test-imap"); btn.disabled = true; btn.textContent = "Проверка…";
-  const r = await api().test_imap();
-  btn.disabled = false; btn.textContent = "Проверить IMAP";
-  toast(r.message, r.ok ? "ok" : "err");
+  try {
+    await api().save_config(collectSettings());
+    const r = await api().test_imap();
+    toast(r.message, r.ok ? "ok" : "err");
+  } catch (e) {
+    toast("Ошибка проверки: " + e, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "Проверить IMAP";
+  }
 };
 
 /* ---------------- общее ---------------- */
@@ -718,6 +981,7 @@ function initSSE() {
     const es = new EventSource("/events");
     es.addEventListener("onCampaignProgress", e => window.onCampaignProgress(JSON.parse(e.data)));
     es.addEventListener("onCampaignLog", e => window.onCampaignLog(JSON.parse(e.data)));
+    es.addEventListener("onSequenceLog", e => window.onSequenceLog(JSON.parse(e.data)));
   } catch (e) { /* браузер без SSE — прогресс просто не будет стримиться */ }
 }
 
@@ -800,6 +1064,10 @@ function installMockApi() {
         primary: ["info@northline.com", "pr@northline.com", "sales@northline.com"], other: ["hello@partners.io"] },
       { input: "acme.io", ok: true, domain: "acme.io", count: 1, primary: ["hello@acme.io"], other: [] },
       { input: "broken-site.ru", ok: false, message: "Не удалось открыть сайт (проверьте адрес или доступность)." } ] }),
+    generate_role_emails: (d) => P({ ok: true, sites_count: 1, total_found: 3, truncated: false, max_sites: 10,
+      roles: ["info", "sales", "support"], sites: [
+        { input: "acme.io", ok: true, domain: "acme.io", count: 3,
+          emails: ["info@acme.io", "sales@acme.io", "support@acme.io"] }] }),
     add_found_emails: (e) => P({ ok: true, added: e.length, skipped: 0, invalid: 0 }),
     list_templates: () => P([{ id: 1, name: "Первое касание", subject: "{{company}} — сотрудничество", body_text: "Здравствуйте, {{first_name|коллеги}}!", body_html: "" }]),
     save_template: () => P({ ok: true, id: 2 }), delete_template: () => P({ ok: true }),
@@ -818,6 +1086,20 @@ function installMockApi() {
         hint: "Добавьте TXT _dmarc с «v=DMARC1; p=none; rua=mailto:…».", detail: "" } }),
     start_campaign: () => P({ ok: false, message: "Демо-режим: запустите через python run.py" }),
     stop_campaign: () => P({ ok: true }),
+    list_sequences: () => P([
+      { id: 1, name: "B2B-аутрич, 3 касания", status: "active", steps: 3, created_at: "",
+        stats: { enrolled: 12, active: 7, completed: 3, replied: 2, stopped: 0, failed: 0, sent: 18 } },
+    ]),
+    get_sequence: (id) => P({ ok: true, sequence: { id, name: "B2B-аутрич, 3 касания", status: "active" },
+      steps: [
+        { step_order: 0, delay_days: 0, subject: "{{company}} — знакомство", body_text: "Здравствуйте, {{first_name|коллеги}}!", body_html: "" },
+        { step_order: 1, delay_days: 3, subject: "Re: {{company}} — знакомство", body_text: "Поднимаю тему выше…", body_html: "" },
+        { step_order: 2, delay_days: 7, subject: "Последнее касание", body_text: "Если неактуально — просто скажите.", body_html: "" },
+      ], stats: {} }),
+    save_sequence: () => P({ ok: true, id: 1 }),
+    delete_sequence: () => P({ ok: true }),
+    set_sequence_status: () => P({ ok: true }),
+    enroll_active: () => P({ ok: true, added: 7, skipped: 0 }),
   }};
   document.body.dataset.demo = "1";
 }

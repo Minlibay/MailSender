@@ -18,6 +18,7 @@ from . import templates
 from .campaign import CampaignRunner
 from .imap_client import ImapError, ImapReader, sync_replies, sync_unsubscribes
 from .imap_client import test_connection as imap_test
+from .sequence_runner import SequenceScheduler
 from .smtp_client import SmtpError, SmtpSender
 from .smtp_client import test_connection as smtp_test
 from .storage import Storage
@@ -48,6 +49,13 @@ class Api:
         self.runner: CampaignRunner | None = None
         self.campaign_id: int | None = None
         self._password_mem: str = ""       # пароль на время сессии, если нет keyring
+        # Планировщик цепочек писем (запускается через start_scheduler()).
+        self.scheduler = SequenceScheduler(
+            self.storage,
+            config_getter=lambda: self.config,
+            password_getter=self._password,
+            on_log=lambda lvl, m: self._js("onSequenceLog", {"level": lvl, "message": m}),
+        )
 
     # ---------------- служебное ----------------
 
@@ -182,6 +190,11 @@ class Api:
         """Поиск по нескольким сайтам сразу (до 10)."""
         from . import finder
         return finder.find_many_sites(urls)
+
+    def generate_role_emails(self, domains, roles=None) -> dict:
+        """Сгенерировать типовые (ролевые) адреса по доменам: info@, sales@…"""
+        from . import finder
+        return finder.generate_role_emails(domains, roles)
 
     def add_found_emails(self, emails: list, company: str = "") -> dict:
         """Добавить выбранные найденные адреса в контакты (с ручного выбора)."""
@@ -439,9 +452,113 @@ class Api:
             return {"ok": False, "message": str(e)}
         return {"ok": True, **res}
 
+    # ---------------- цепочки писем (sequences) ----------------
+
+    def start_scheduler(self) -> None:
+        """Запустить фоновый планировщик цепочек (идемпотентно)."""
+        self.scheduler.start()
+
+    def list_sequences(self) -> list:
+        out = []
+        for s in self.storage.list_sequences():
+            st = self.storage.sequence_stats(s["id"])
+            out.append({
+                "id": s["id"], "name": s["name"], "status": s["status"],
+                "steps": self.storage.count_steps(s["id"]),
+                "created_at": s["created_at"],
+                "stats": st,
+            })
+        return out
+
+    def get_sequence(self, sequence_id: int) -> dict:
+        s = self.storage.get_sequence(int(sequence_id))
+        if s is None:
+            return {"ok": False, "message": "Цепочка не найдена"}
+        steps = [{
+            "step_order": st["step_order"],
+            "delay_days": st["delay_days"],
+            "subject": st["subject"],
+            "body_text": st["body_text"],
+            "body_html": st["body_html"],
+        } for st in self.storage.list_steps(int(sequence_id))]
+        return {
+            "ok": True,
+            "sequence": {"id": s["id"], "name": s["name"], "status": s["status"]},
+            "steps": steps,
+            "stats": self.storage.sequence_stats(int(sequence_id)),
+        }
+
+    def save_sequence(self, name: str, steps: list, sequence_id=None) -> dict:
+        if not (name or "").strip():
+            return {"ok": False, "message": "Укажите название цепочки"}
+        steps = steps or []
+        if not steps:
+            return {"ok": False, "message": "Добавьте хотя бы один шаг"}
+        for i, s in enumerate(steps, 1):
+            if not (s.get("subject") or "").strip():
+                return {"ok": False, "message": f"Шаг {i}: укажите тему письма"}
+            if not (s.get("body_text") or "").strip() and not (s.get("body_html") or "").strip():
+                return {"ok": False, "message": f"Шаг {i}: письмо пустое"}
+        if sequence_id:
+            sid = int(sequence_id)
+            self.storage.update_sequence(sid, name=name)
+        else:
+            sid = self.storage.create_sequence(name)
+        self.storage.replace_steps(sid, steps)
+        return {"ok": True, "id": sid}
+
+    def delete_sequence(self, sequence_id: int) -> dict:
+        self.storage.delete_sequence(int(sequence_id))
+        return {"ok": True}
+
+    def set_sequence_status(self, sequence_id: int, status: str) -> dict:
+        if status not in ("active", "paused", "archived"):
+            return {"ok": False, "message": "Недопустимый статус"}
+        self.storage.set_sequence_status(int(sequence_id), status)
+        return {"ok": True}
+
+    def enroll_active(self, sequence_id: int) -> dict:
+        """Добавить всех активных контактов (не в стоп-листе) в цепочку.
+
+        Уже добавленные (активная запись) пропускаются. Первый шаг ставится
+        в очередь с учётом его задержки (обычно 0 — уйдёт при ближайшем
+        проходе планировщика).
+        """
+        sid = int(sequence_id)
+        seq = self.storage.get_sequence(sid)
+        if seq is None:
+            return {"ok": False, "message": "Цепочка не найдена"}
+        steps = self.storage.list_steps(sid)
+        if not steps:
+            return {"ok": False, "message": "В цепочке нет шагов"}
+
+        first_delay = float(steps[0]["delay_days"] or 0)
+        next_run = (datetime.now(timezone.utc)
+                    + timedelta(days=first_delay)).isoformat()
+
+        already = self.storage.active_enrollment_emails(sid)
+        suppressed = self.storage.suppressed_set()
+        added = skipped = 0
+        for c in self.storage.list_contacts(status="active"):
+            email = c["email"]
+            if email in already or email in suppressed:
+                skipped += 1
+                continue
+            self.storage.enroll_contact(sid, c["id"], email, next_run)
+            added += 1
+        # цепочка должна быть активной, чтобы планировщик её вёл
+        if seq["status"] != "active" and added:
+            self.storage.set_sequence_status(sid, "active")
+        return {"ok": True, "added": added, "skipped": skipped}
+
+    def sequence_stats(self, sequence_id: int) -> dict:
+        return self.storage.sequence_stats(int(sequence_id))
+
     # ---------------- жизненный цикл ----------------
 
     def shutdown(self) -> None:
+        if self.scheduler:
+            self.scheduler.stop()
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self.runner.join(timeout=5)

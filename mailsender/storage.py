@@ -74,9 +74,54 @@ CREATE TABLE IF NOT EXISTS activity (
     FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
 );
 
+-- Цепочки писем (последовательности с автоматической отправкой по задержкам).
+CREATE TABLE IF NOT EXISTS sequences (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    status      TEXT DEFAULT 'active',   -- active | paused | archived
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sequence_steps (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sequence_id INTEGER NOT NULL,
+    step_order  INTEGER NOT NULL,        -- 0-based порядок шага
+    delay_days  REAL DEFAULT 0,          -- задержка перед шагом (для шага 0 — от момента добавления)
+    subject     TEXT DEFAULT '',
+    body_text   TEXT DEFAULT '',
+    body_html   TEXT DEFAULT '',
+    FOREIGN KEY (sequence_id) REFERENCES sequences(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS sequence_enrollments (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    sequence_id       INTEGER NOT NULL,
+    contact_id        INTEGER,
+    email             TEXT NOT NULL,
+    status            TEXT DEFAULT 'active',  -- active | completed | stopped | replied | failed
+    current_step      INTEGER DEFAULT 0,      -- индекс следующего шага к отправке
+    next_run_at       TEXT,                   -- когда отправить следующий шаг (ISO UTC)
+    enrolled_at       TEXT NOT NULL,
+    last_step_sent_at TEXT,
+    FOREIGN KEY (sequence_id) REFERENCES sequences(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS sequence_sends (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    enrollment_id INTEGER,
+    sequence_id   INTEGER,
+    step_order    INTEGER,
+    email         TEXT NOT NULL,
+    status        TEXT NOT NULL,             -- sent | failed
+    error         TEXT DEFAULT '',
+    sent_at       TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_send_log_campaign ON send_log(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
 CREATE INDEX IF NOT EXISTS idx_activity_contact ON activity(contact_id);
+CREATE INDEX IF NOT EXISTS idx_seq_enroll_due ON sequence_enrollments(status, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_seq_steps_seq ON sequence_steps(sequence_id, step_order);
 """
 
 # Колонки, добавляемые к contacts по мере развития (миграция ALTER TABLE).
@@ -419,3 +464,150 @@ class Storage:
                 (campaign_id, limit),
             )
             return cur.fetchall()
+
+    # ---------------- цепочки писем (sequences) ----------------
+
+    def create_sequence(self, name: str, status: str = "active") -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO sequences (name, status, created_at) VALUES (?, ?, ?)",
+                (name, status, _now()),
+            )
+            return cur.lastrowid
+
+    def update_sequence(self, sequence_id: int, **fields) -> None:
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields)
+        with self._cursor() as cur:
+            cur.execute(f"UPDATE sequences SET {cols} WHERE id=?",
+                        [*fields.values(), sequence_id])
+
+    def set_sequence_status(self, sequence_id: int, status: str) -> None:
+        self.update_sequence(sequence_id, status=status)
+
+    def get_sequence(self, sequence_id: int) -> sqlite3.Row | None:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM sequences WHERE id=?", (sequence_id,))
+            return cur.fetchone()
+
+    def list_sequences(self) -> list[sqlite3.Row]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM sequences ORDER BY created_at DESC")
+            return cur.fetchall()
+
+    def delete_sequence(self, sequence_id: int) -> None:
+        # ON DELETE CASCADE удалит шаги и enrollments (foreign_keys=ON).
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM sequences WHERE id=?", (sequence_id,))
+
+    def replace_steps(self, sequence_id: int, steps: list[dict]) -> None:
+        """Полностью заменить шаги цепочки. steps: [{delay_days, subject,
+        body_text, body_html}, ...] в нужном порядке."""
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM sequence_steps WHERE sequence_id=?", (sequence_id,))
+            for i, s in enumerate(steps):
+                cur.execute(
+                    """INSERT INTO sequence_steps
+                       (sequence_id, step_order, delay_days, subject, body_text, body_html)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (sequence_id, i, float(s.get("delay_days") or 0),
+                     s.get("subject", ""), s.get("body_text", ""), s.get("body_html", "")),
+                )
+
+    def list_steps(self, sequence_id: int) -> list[sqlite3.Row]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sequence_steps WHERE sequence_id=? ORDER BY step_order",
+                (sequence_id,),
+            )
+            return cur.fetchall()
+
+    def count_steps(self, sequence_id: int) -> int:
+        with self._cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM sequence_steps WHERE sequence_id=?",
+                        (sequence_id,))
+            return cur.fetchone()["n"]
+
+    # ---- enrollments (кто и на каком шаге цепочки) ----
+
+    def active_enrollment_emails(self, sequence_id: int) -> set[str]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT email FROM sequence_enrollments WHERE sequence_id=? AND status='active'",
+                (sequence_id,),
+            )
+            return {r["email"] for r in cur.fetchall()}
+
+    def enroll_contact(self, sequence_id: int, contact_id, email: str,
+                       next_run_at: str) -> int:
+        email = email.strip().lower()
+        with self._cursor() as cur:
+            cur.execute(
+                """INSERT INTO sequence_enrollments
+                   (sequence_id, contact_id, email, status, current_step,
+                    next_run_at, enrolled_at)
+                   VALUES (?, ?, ?, 'active', 0, ?, ?)""",
+                (sequence_id, contact_id, email, next_run_at, _now()),
+            )
+            return cur.lastrowid
+
+    def due_enrollments(self, now_iso: str, limit: int = 200) -> list[sqlite3.Row]:
+        """Активные записи, у которых подошёл срок следующего шага."""
+        with self._cursor() as cur:
+            cur.execute(
+                """SELECT * FROM sequence_enrollments
+                   WHERE status='active' AND next_run_at IS NOT NULL
+                   AND next_run_at <= ? ORDER BY next_run_at LIMIT ?""",
+                (now_iso, limit),
+            )
+            return cur.fetchall()
+
+    def update_enrollment(self, enrollment_id: int, **fields) -> None:
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields)
+        with self._cursor() as cur:
+            cur.execute(f"UPDATE sequence_enrollments SET {cols} WHERE id=?",
+                        [*fields.values(), enrollment_id])
+
+    def stop_enrollments_for_email(self, email: str, status: str = "replied") -> int:
+        """Остановить активные записи для адреса (например, когда пришёл ответ)."""
+        email = email.strip().lower()
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE sequence_enrollments SET status=? WHERE email=? AND status='active'",
+                (status, email),
+            )
+            return cur.rowcount
+
+    def log_sequence_send(self, enrollment_id, sequence_id, step_order, email,
+                          status, error="") -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """INSERT INTO sequence_sends
+                   (enrollment_id, sequence_id, step_order, email, status, error, sent_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (enrollment_id, sequence_id, step_order, email, status, error, _now()),
+            )
+
+    def sequence_stats(self, sequence_id: int) -> dict:
+        stats = {"enrolled": 0, "active": 0, "completed": 0,
+                 "replied": 0, "stopped": 0, "failed": 0, "sent": 0}
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT status, COUNT(*) AS n FROM sequence_enrollments "
+                "WHERE sequence_id=? GROUP BY status",
+                (sequence_id,),
+            )
+            for r in cur.fetchall():
+                stats["enrolled"] += r["n"]
+                if r["status"] in stats:
+                    stats[r["status"]] = r["n"]
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM sequence_sends "
+                "WHERE sequence_id=? AND status='sent'",
+                (sequence_id,),
+            )
+            stats["sent"] = cur.fetchone()["n"]
+        return stats
